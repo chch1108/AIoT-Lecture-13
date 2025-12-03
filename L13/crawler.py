@@ -1,10 +1,13 @@
+import json
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import requests
 
 DB_PATH = "sqlitedata.db"
+FALLBACK_JSON = Path(__file__).with_name("F-A0010-001.json")
 FORECAST_TABLE = "forecasts"
 
 
@@ -77,21 +80,29 @@ def save_to_db(records: List[Tuple[str, str, Optional[float], Optional[float]]])
     finally:
         conn.close()
 
-url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-A0010-001"
-params = {
-    "Authorization": "CWA-DAC039F0-FBE6-42ED-AC20-E9ED75C0D5F9",
-    "downloadType": "WEB",
-    "format": "JSON"
-}
+def fetch_data() -> dict:
+    url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-A0010-001"
+    params = {
+        "Authorization": "CWA-DAC039F0-FBE6-42ED-AC20-E9ED75C0D5F9",
+        "downloadType": "WEB",
+        "format": "JSON"
+    }
 
-try:
-    response = requests.get(url, params=params)
-    response.raise_for_status()   # raise exception if error code
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        print("成功透過 API 取得資料。")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print("API 連線失敗，將改用本地備援檔案:", e)
+        if not FALLBACK_JSON.exists():
+            raise FileNotFoundError("找不到備援 JSON 檔案")
+        with FALLBACK_JSON.open("r", encoding="utf-8") as f:
+            return json.load(f)
 
-    data = response.json()
+
+if __name__ == "__main__":
+    data = fetch_data()
     forecast_rows = parse_forecasts(data)
     save_to_db(forecast_rows)
     print(f"成功寫入 {len(forecast_rows)} 筆天氣資料！")
-
-except requests.exceptions.RequestException as e:
-    print("API 連線失敗:", e)
